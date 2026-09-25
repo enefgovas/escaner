@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Escáner de asistencia</title>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    /* =====================================================================
+     *  ÚNICO DATO QUE DEBES CAMBIAR:
+     *  Pega aquí la URL de tu aplicación web de Apps Script (termina en /exec)
+     * ===================================================================== */
+    var URL_WEBAPP = 'https://script.google.com/macros/s/AKfycbx3Emtr7CqGX45O8KeY3T7eaaNgcQxC1QVgvFUQpGoCN9SkGPeWe5N_8fsbxEoGZ5nc/exec';
+
+    // Nombre del evento que se muestra arriba (opcional)
+    var NOMBRE_EVENTO = 'CONGRESO DE EDUCACIÓN FÍSICA E INCLUSIÓN EDUCATIVA';
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+           background: #0f172a; color: #e2e8f0; }
+    header { background: #1e3a8a; padding: 16px; text-align: center; }
+    header .sub { font-size: 11px; letter-spacing: 3px; opacity: .85; }
+    header h1 { margin: 6px 0 0; font-size: 20px; }
+    main { padding: 16px; max-width: 460px; margin: 0 auto; }
+    .btn { display: block; width: 100%; padding: 15px; margin: 10px 0; border: 0; border-radius: 12px;
+           font-size: 17px; font-weight: bold; background: #2563eb; color: #fff; text-align: center;
+           cursor: pointer; }
+    .btn.sec { background: #334155; font-size: 15px; }
+    .btn.rojo { background: #7f1d1d; font-size: 15px; }
+    #lector { width: 100%; border-radius: 12px; overflow: hidden; background: #000; }
+    #resultado { display: none; margin: 14px 0; padding: 18px; border-radius: 12px; text-align: center; }
+    #resTitulo { font-size: 20px; font-weight: bold; }
+    #resNombre { font-size: 22px; margin-top: 6px; }
+    #resDetalle { font-size: 14px; margin-top: 6px; opacity: .9; word-break: break-word; }
+    .ok { background: #15803d; } .aviso { background: #b45309; }
+    .error { background: #b91c1c; } .espera { background: #475569; }
+    .manual { display: flex; gap: 8px; }
+    .manual input { flex: 1; min-width: 0; padding: 14px; border-radius: 12px; border: 0; font-size: 16px;
+                    text-transform: uppercase; }
+    .manual .btn { width: auto; margin: 0; padding: 14px 18px; }
+    .contador { text-align: center; opacity: .8; margin-top: 18px; }
+    hr { border: 0; border-top: 1px solid #334155; margin: 18px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="sub">REGISTRO DE ASISTENCIA</div>
+    <h1 id="titulo"></h1>
+  </header>
+
+  <main>
+    <button id="btnCamara" class="btn">📷 Activar cámara</button>
+    <button id="btnDetener" class="btn rojo" style="display:none">■ Detener cámara</button>
+    <div id="lector"></div>
+
+    <div id="resultado">
+      <div id="resTitulo"></div>
+      <div id="resNombre"></div>
+      <div id="resDetalle"></div>
+    </div>
+
+    <hr>
+    <label class="btn sec" for="foto">📸 Tomar foto del QR (si la cámara no abre)</label>
+    <input type="file" id="foto" accept="image/*" capture="environment" style="display:none">
+
+    <div class="manual">
+      <input id="folioManual" placeholder="Folio, ej. EVT26-0001" autocomplete="off">
+      <button id="btnManual" class="btn sec">Registrar</button>
+    </div>
+
+    <p class="contador">Registradas en este teléfono (esta sesión): <b id="contador">0</b></p>
+    <div id="lectorArchivo" style="display:none"></div>
+  </main>
+
+  <script>
+    document.getElementById('titulo').textContent = NOMBRE_EVENTO;
+    var CLAVE = new URLSearchParams(location.search).get('clave') || '';
+    var lector = null, ocupado = false, ultimo = '', ultimoT = 0, cuenta = 0;
+
+    function mostrar(r) {
+      var box = document.getElementById('resultado');
+      box.className = r.tipo;
+      box.style.display = 'block';
+      document.getElementById('resTitulo').textContent = r.titulo || '';
+      document.getElementById('resNombre').textContent = r.nombre || '';
+      document.getElementById('resDetalle').textContent = r.detalle || '';
+      if (navigator.vibrate && r.tipo !== 'espera') {
+        navigator.vibrate(r.tipo === 'ok' ? 150 : [80, 60, 80, 60, 80]);
+      }
+    }
+
+    if (!/\/exec$/.test(URL_WEBAPP)) {
+      mostrar({ tipo: 'error', titulo: 'Falta configurar',
+                detalle: 'Pega la URL de tu aplicación web (termina en /exec) dentro de este archivo.' });
+    } else if (!CLAVE) {
+      mostrar({ tipo: 'error', titulo: 'Link incompleto',
+                detalle: 'Abre el link que termina en ?clave=… (menú "Ver links del sistema" en el Sheet).' });
+    }
+
+    function procesar(texto) {
+      texto = (texto || '').trim();
+      if (!texto || ocupado) return;
+      var ahora = Date.now();
+      if (texto === ultimo && ahora - ultimoT < 5000) return; // evita lecturas repetidas
+      ultimo = texto; ultimoT = ahora; ocupado = true;
+      mostrar({ tipo: 'espera', titulo: 'Verificando…' });
+
+      var url = URL_WEBAPP + '?accion=asistencia' +
+                '&clave=' + encodeURIComponent(CLAVE) +
+                '&qr=' + encodeURIComponent(texto);
+
+      fetch(url, { method: 'GET', redirect: 'follow' })
+        .then(function (resp) { return resp.json(); })
+        .then(function (r) {
+          mostrar(r);
+          if (r.tipo === 'ok') {
+            cuenta++;
+            document.getElementById('contador').textContent = cuenta;
+          }
+        })
+        .catch(function (err) {
+          mostrar({ tipo: 'error', titulo: 'Error de conexión',
+                    detalle: 'Revisa el internet del teléfono y vuelve a escanear. (' + err.message + ')' });
+          ultimo = '';
+        })
+        .finally(function () { setTimeout(function () { ocupado = false; }, 1800); });
+    }
+
+    document.getElementById('btnCamara').onclick = function () {
+      var boton = this;
+      if (typeof Html5Qrcode === 'undefined') {
+        mostrar({ tipo: 'error', titulo: 'No cargó el lector',
+                  detalle: 'Revisa tu internet y recarga la página. Mientras, escribe el folio abajo.' });
+        return;
+      }
+      if (lector) return;
+      lector = new Html5Qrcode('lector');
+      lector.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 240, height: 240 } },
+        procesar, function () {})
+        .then(function () {
+          boton.style.display = 'none';
+          document.getElementById('btnDetener').style.display = 'block';
+        })
+        .catch(function (err) {
+          lector = null;
+          mostrar({ tipo: 'error', titulo: 'No se pudo abrir la cámara',
+                    detalle: 'Revisa que el navegador tenga permiso de cámara. (' + err + ')' });
+        });
+    };
+
+    document.getElementById('btnDetener').onclick = function () {
+      var b = this;
+      if (!lector) return;
+      lector.stop().then(function () {
+        lector.clear(); lector = null;
+        b.style.display = 'none';
+        document.getElementById('btnCamara').style.display = 'block';
+      });
+    };
+
+    document.getElementById('foto').onchange = function () {
+      var input = this, archivo = input.files[0];
+      if (!archivo) return;
+      if (typeof Html5Qrcode === 'undefined') {
+        mostrar({ tipo: 'error', titulo: 'No cargó el lector', detalle: 'Escribe el folio abajo.' });
+        return;
+      }
+      var lf = new Html5Qrcode('lectorArchivo');
+      lf.scanFile(archivo, false)
+        .then(function (t) { ultimo = ''; procesar(t); })
+        .catch(function () {
+          mostrar({ tipo: 'error', titulo: 'No se detectó un QR',
+                    detalle: 'Toma la foto más cerca, derecha y con buena luz.' });
+        })
+        .finally(function () { input.value = ''; try { lf.clear(); } catch (e) {} });
+    };
+
+    document.getElementById('btnManual').onclick = function () {
+      var campo = document.getElementById('folioManual');
+      ultimo = '';
+      procesar(campo.value);
+      campo.value = '';
+    };
+  </script>
+</body>
+</html>
