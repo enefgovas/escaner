@@ -106,25 +106,57 @@
       ultimo = texto; ultimoT = ahora; ocupado = true;
       mostrar({ tipo: 'espera', titulo: 'Verificando…' });
 
-      var url = URL_WEBAPP + '?accion=asistencia' +
-                '&clave=' + encodeURIComponent(CLAVE) +
-                '&qr=' + encodeURIComponent(texto);
+      llamarServidor(texto, function (r) {
+        mostrar(r);
+        if (r.tipo === 'ok') {
+          cuenta++;
+          document.getElementById('contador').textContent = cuenta;
+        }
+        if (r.tipo === 'error') ultimo = '';
+        setTimeout(function () { ocupado = false; }, 1800);
+      });
+    }
 
-      fetch(url, { method: 'GET', redirect: 'follow' })
-        .then(function (resp) { return resp.json(); })
-        .then(function (r) {
-          mostrar(r);
-          if (r.tipo === 'ok') {
-            cuenta++;
-            document.getElementById('contador').textContent = cuenta;
-          }
-        })
-        .catch(function (err) {
-          mostrar({ tipo: 'error', titulo: 'Error de conexión',
-                    detalle: 'Revisa el internet del teléfono y vuelve a escanear. (' + err.message + ')' });
-          ultimo = '';
-        })
-        .finally(function () { setTimeout(function () { ocupado = false; }, 1800); });
+    // Conexión con Apps Script por JSONP (no depende de CORS; funciona en iPhone y Android)
+    function llamarServidor(texto, listo) {
+      var nombreFn = 'resp_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+      var script = document.createElement('script');
+      var terminado = false;
+
+      function limpiar() {
+        terminado = true;
+        try { delete window[nombreFn]; } catch (e) { window[nombreFn] = undefined; }
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      var temporizador = setTimeout(function () {
+        if (terminado) return;
+        limpiar();
+        listo({ tipo: 'error', titulo: 'Sin respuesta',
+                detalle: 'El servidor tardó demasiado. Revisa el internet y vuelve a escanear.' });
+      }, 20000);
+
+      window[nombreFn] = function (r) {
+        if (terminado) return;
+        clearTimeout(temporizador);
+        limpiar();
+        listo(r);
+      };
+
+      script.onerror = function () {
+        if (terminado) return;
+        clearTimeout(temporizador);
+        limpiar();
+        listo({ tipo: 'error', titulo: 'Error de conexión',
+                detalle: 'No se pudo contactar al servidor. Revisa URL_WEBAPP e internet.' });
+      };
+
+      script.src = URL_WEBAPP + '?accion=asistencia' +
+                   '&clave=' + encodeURIComponent(CLAVE) +
+                   '&qr=' + encodeURIComponent(texto) +
+                   '&callback=' + nombreFn +
+                   '&t=' + Date.now();
+      document.body.appendChild(script);
     }
 
     document.getElementById('btnCamara').onclick = function () {
